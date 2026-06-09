@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>웹 카메라 이미지 오버레이 (업로드, URL & 투명도 조절)</title>
+    <title>웹 카메라 이미지 오버레이 (카메라 전환 추가)</title>
     <style>
         body {
             font-family: sans-serif;
@@ -23,12 +23,14 @@
             display: flex;
             flex-direction: column;
             gap: 15px;
-            width: 610px;
+            width: 100%;
+            max-width: 610px;
+            box-sizing: border-box;
         }
 
         .control-row {
             display: flex;
-            gap: 20px;
+            gap: 15px;
             align-items: center;
             flex-wrap: wrap;
         }
@@ -38,6 +40,7 @@
             align-items: center;
             gap: 8px;
             flex: 1;
+            min-width: 200px;
         }
 
         .url-input-group {
@@ -53,24 +56,35 @@
             border-radius: 4px;
         }
 
-        #btn-url {
+        /* 공통 버튼 스타일 */
+        button {
             padding: 6px 12px;
             background-color: #007bff;
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
+            white-space: nowrap;
         }
 
-        #btn-url:hover {
+        button:hover {
             background-color: #0056b3;
+        }
+
+        /* 카메라 전환 버튼 스타일 */
+        #btn-switch-camera {
+            background-color: #28a745;
+        }
+        #btn-switch-camera:hover {
+            background-color: #218838;
         }
 
         /* 카메라와 이미지를 담을 부모 컨테이너 */
         .camera-container {
             position: relative;
-            width: 640px;
-            height: 480px;
+            width: 100%;
+            max-width: 640px;
+            aspect-ratio: 4 / 3; /* 모바일 대응 비율 유지 */
             background: #000;
             border-radius: 8px;
             overflow: hidden;
@@ -84,6 +98,11 @@
             object-fit: cover;
         }
 
+        /* 전면 카메라일 때 좌우 반전 처리 (거울 모드) */
+        .mirror {
+            transform: scaleX(-1);
+        }
+
         /* 2. 위에 겹쳐질 반투명 이미지 */
         #overlay-img {
             position: absolute;
@@ -91,11 +110,9 @@
             left: 0;
             width: 100%;
             height: 100%;
-            object-fit: contain; /* 이미지 비율 유지 */
-            pointer-events: none; /* 마우스 클릭 통과 */
-            display: none; /* 초기에는 이미지가 없으므로 숨김 */
-            
-            /* 초기 투명도 설정 (50%) */
+            object-fit: contain;
+            pointer-events: none;
+            display: none;
             opacity: 0.5; 
         }
     </style>
@@ -104,24 +121,27 @@
 
     <!-- 상단 조작부 -->
     <div class="controls">
-        <!-- 첫 번째 줄: 파일 업로드 및 투명도 조절 -->
+        <!-- 첫 번째 줄: 파일 업로드, 투명도 조절, 카메라 전환 -->
         <div class="control-row">
             <div class="control-group">
-                <label for="image-upload"><b>📁 파일 업로드:</b></label>
+                <label for="image-upload"><b>📁 파일:</b></label>
                 <input type="file" id="image-upload" accept="image/*">
             </div>
             
-            <div class="control-group" style="max-width: 250px;">
+            <div class="control-group">
                 <label for="opacity-slider"><b>🌓 투명도:</b></label>
                 <input type="range" id="opacity-slider" min="0" max="1" step="0.01" value="0.5">
                 <span id="opacity-value">50%</span>
             </div>
+
+            <!-- 🔄 카메라 전환 버튼 추가 -->
+            <button id="btn-switch-camera">🔄 카메라 전환</button>
         </div>
 
         <!-- 두 번째 줄: 이미지 주소(URL) 입력 -->
         <div class="control-row">
             <div class="url-input-group">
-                <label for="image-url" style="align-self: center; white-space: nowrap;"><b>🌐 이미지 주소(URL):</b></label>
+                <label for="image-url" style="align-self: center; white-space: nowrap;"><b>🌐 URL:</b></label>
                 <input type="text" id="image-url" placeholder="https://example.com">
                 <button id="btn-url">적용</button>
             </div>
@@ -130,9 +150,7 @@
 
     <!-- 카메라 화면 출력부 -->
     <div class="camera-container">
-        <!-- 카메라 영상 -->
-        <video id="webcam" autoplay playsinline></video>
-        <!-- 반투명 오버레이 이미지 -->
+        <video id="webcam" autoplay playsinline class="mirror"></video>
         <img id="overlay-img" alt="오버레이 이미지">
     </div>
 
@@ -141,23 +159,56 @@
         const imageUpload = document.getElementById('image-upload');
         const imageUrlInput = document.getElementById('image-url');
         const btnUrl = document.getElementById('btn-url');
+        const btnSwitchCamera = document.getElementById('btn-switch-camera');
         const overlayImg = document.getElementById('overlay-img');
         const opacitySlider = document.getElementById('opacity-slider');
         const opacityValue = document.getElementById('opacity-value');
 
-        // 1. 웹캠 구동 스크립트
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({ video: true })
+        let currentStream = null;
+        // 'user'는 전면(셀카), 'environment'는 후면 카메리를 뜻합니다.
+        let currentFacingMode = 'user'; 
+
+        // 1. 카메라 시작 및 교체 함수
+        function startCamera(facingMode) {
+            // 기존에 켜져 있던 카메라 스트림이 있다면 종료 처리
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            const constraints = {
+                video: { facingMode: facingMode }
+            };
+
+            navigator.mediaDevices.getUserMedia(constraints)
                 .then(function(stream) {
+                    currentStream = stream;
                     video.srcObject = stream;
+                    
+                    // 전면 카메라일 때만 거울처럼 보이도록 좌우 반전 효과 부여
+                    if (facingMode === 'user') {
+                        video.classList.add('mirror');
+                    } else {
+                        video.classList.remove('mirror');
+                    }
                 })
                 .catch(function(error) {
-                    console.error("카메라 작동 실패:", error);
-                    alert("카메라 권한을 허용해주시거나 HTTPS 환경에서 실행해주세요.");
+                    console.error("카메라 변경 실패:", error);
+                    alert("카메라를 전환할 수 없거나 권한이 없습니다.");
                 });
+        }
+
+        // 초기 실행 시 전면 카메라로 시작
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            startCamera(currentFacingMode);
         } else {
             alert("이 브라우저는 카메라를 지원하지 않습니다.");
         }
+
+        // 🔄 카메라 전환 버튼 클릭 이벤트
+        btnSwitchCamera.addEventListener('click', function() {
+            currentFacingMode = (currentFacingMode === 'user') ? 'environment' : 'user';
+            startCamera(currentFacingMode);
+        });
 
         // 2. 이미지 파일 직접 업로드 처리
         imageUpload.addEventListener('change', function(e) {
@@ -166,8 +217,8 @@
                 const reader = new FileReader();
                 reader.onload = function(event) {
                     overlayImg.src = event.target.result;
-                    overlayImg.style.display = 'block'; // 이미지 보이기
-                    imageUrlInput.value = ''; // URL 입력창 초기화
+                    overlayImg.style.display = 'block';
+                    imageUrlInput.value = '';
                 }
                 reader.readAsDataURL(file);
             }
@@ -178,25 +229,22 @@
             const url = imageUrlInput.value.trim();
             if (url) {
                 overlayImg.src = url;
-                overlayImg.style.display = 'block'; // 이미지 보이기
-                imageUpload.value = ''; // 파일 선택창 초기화
+                overlayImg.style.display = 'block';
+                imageUpload.value = '';
             } else {
                 alert("올바른 이미지 주소를 입력해주세요.");
             }
         });
 
-        // 엔터키 입력 시에도 URL 적용되도록 설정
         imageUrlInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                btnUrl.click();
-            }
+            if (e.key === 'Enter') btnUrl.click();
         });
 
         // 4. 슬라이더를 이용한 실시간 투명도 조작
         opacitySlider.addEventListener('input', function(e) {
             const alpha = e.target.value;
-            overlayImg.style.opacity = alpha; // CSS 투명도 반영
-            opacityValue.textContent = Math.round(alpha * 100) + '%'; // 텍스트 표시 업데이트
+            overlayImg.style.opacity = alpha;
+            opacityValue.textContent = Math.round(alpha * 100) + '%';
         });
     </script>
 
