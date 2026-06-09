@@ -102,7 +102,8 @@
             min-width: 100px;
         }
 
-        #opacity-value {
+        #opacity-value,
+        #zoom-value {
             min-width: 40px;
             text-align: right;
             font-weight: 500;
@@ -187,6 +188,7 @@
             height: 100%;
             object-fit: cover;
             display: block;
+            transform-origin: center;
         }
 
         #webcam.mirror {
@@ -334,7 +336,16 @@
             </div>
         </div>
 
-        <!-- 세 번째 줄: 리셋 버튼 -->
+        <!-- 세 번째 줄: 카메라 배율 조절 -->
+        <div class="control-row">
+            <div class="control-group">
+                <label for="zoom-slider">🔍 카메라 배율:</label>
+                <input type="range" id="zoom-slider" min="100" max="300" step="10" value="100" title="카메라 배율을 조절합니다">
+                <span id="zoom-value">1.0x</span>
+            </div>
+        </div>
+
+        <!-- 네 번째 줄: 리셋 버튼 -->
         <div class="control-row">
             <button id="btn-reset" title="모든 설정을 초기화합니다">🗑️ 초기화</button>
         </div>
@@ -351,6 +362,7 @@
         const CONFIG = {
             MAX_FILE_SIZE: 5 * 1024 * 1024, // 5MB
             DEFAULT_OPACITY: 50,
+            DEFAULT_ZOOM: 100,
             SUPPORTED_MIME_TYPES: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
             MESSAGE_DURATION: 3000, // 3초
         };
@@ -365,6 +377,8 @@
         const overlayImg = document.getElementById('overlay-img');
         const opacitySlider = document.getElementById('opacity-slider');
         const opacityValue = document.getElementById('opacity-value');
+        const zoomSlider = document.getElementById('zoom-slider');
+        const zoomValue = document.getElementById('zoom-value');
         const cameraContainer = document.getElementById('camera-container');
 
         /* ============ 상태 관리 ============ */
@@ -476,6 +490,7 @@
                     }
 
                     currentFacingMode = facingMode;
+                    applyZoom();
                     showMessage('카메라가 전환되었습니다', 'success');
                 })
                 .catch(function(error) {
@@ -496,6 +511,20 @@
                     setButtonDisabled(btnSwitchCamera, false);
                     cameraContainer.classList.remove('loading');
                 });
+        }
+
+        /**
+         * 카메라 배율을 적용합니다
+         */
+        function applyZoom() {
+            const zoomLevel = zoomSlider.value / 100;
+            const isMirror = video.classList.contains('mirror');
+            
+            if (isMirror) {
+                video.style.transform = `scaleX(-1) scale(${zoomLevel})`;
+            } else {
+                video.style.transform = `scale(${zoomLevel})`;
+            }
         }
 
         /**
@@ -612,6 +641,16 @@
         }
 
         /**
+         * 카메라 배율 조절
+         */
+        function handleZoomChange(e) {
+            const zoomPercent = parseInt(e.target.value);
+            const zoomLevel = (zoomPercent / 100).toFixed(1);
+            zoomValue.textContent = zoomLevel + 'x';
+            applyZoom();
+        }
+
+        /**
          * 모든 설정을 초기화합니다
          */
         function resetAll() {
@@ -619,6 +658,11 @@
             opacitySlider.value = CONFIG.DEFAULT_OPACITY;
             opacityValue.textContent = CONFIG.DEFAULT_OPACITY + '%';
             overlayImg.style.opacity = CONFIG.DEFAULT_OPACITY / 100;
+            
+            zoomSlider.value = CONFIG.DEFAULT_ZOOM;
+            zoomValue.textContent = (CONFIG.DEFAULT_ZOOM / 100).toFixed(1) + 'x';
+            applyZoom();
+            
             showMessage('모든 설정이 초기화되었습니다', 'info');
         }
 
@@ -646,6 +690,9 @@
 
         // 투명도 조절
         opacitySlider.addEventListener('input', handleOpacityChange);
+
+        // 카메라 배율 조절
+        zoomSlider.addEventListener('input', handleZoomChange);
 
         // 초기화 버튼
         btnReset.addEventListener('click', resetAll);
